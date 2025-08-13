@@ -1,107 +1,72 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>名札スキャン（Teachable Machine）</title>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.9.0"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
-    <style>
-        body {
-            font-family: sans-serif;
-            margin: 20px;
-            background-color: #f9f9f9;
-        }
-        h1 {
-            font-size: 1.5em;
-            margin-bottom: 0.5em;
-        }
-        #webcam-container {
-            margin-top: 10px;
-        }
-        #label-container div {
-            padding: 4px;
-        }
-        .error {
-            color: red;
-            font-weight: bold;
-            margin-top: 10px;
-        }
-        button {
-            padding: 6px 12px;
-            margin: 5px;
-        }
-    </style>
+  <meta charset="UTF-8">
+  <title>名札スキャン（Teachable Machine）</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest"></script>
 </head>
 <body>
-    <h1>名札スキャン（Teachable Machine）</h1>
-    <p>GitHub Pages から model.json / weights.bin / metadata.json を読み込みます。</p>
-    <div id="status" class="error"></div>
-    <button type="button" onclick="init()">カメラ開始</button>
-    <button type="button" onclick="stop()">停止</button>
-    <div id="webcam-container"></div>
-    <div id="label-container"></div>
+  <h1>名札スキャン（Teachable Machine）</h1>
+  <p>GitHub Pages から model.json / weights.bin / metadata.json を読み込みます</p>
+  <button onclick="init()">カメラ開始</button>
+  <button onclick="stop()">停止</button>
+  <div id="webcam-container"></div>
+  <div id="label-container" style="margin-top: 10px; font-size: 1.5em; font-weight: bold;"></div>
 
-    <script type="text/javascript">
-        // モデルフォルダのパス（index.html と同じ場所に model.json などを置く）
-        const MODEL_URL = "./";
+  <script type="text/javascript">
+    // モデルのパス（GitHub Pages URLに変更）
+    const MODEL_URL = "https://chizukatakekoshi.github.io/nametags-tm/";
 
-        let model, webcam, labelContainer, maxPredictions;
-        let isRunning = false;
+    let model, webcam, labelContainer, maxPredictions, loopId;
 
-        async function init() {
-            document.getElementById("status").textContent = "";
-            try {
-                const modelURL = MODEL_URL + "model.json";
-                const metadataURL = MODEL_URL + "metadata.json";
+    async function init() {
+      // モデルとメタデータの読み込み
+      const modelURL = MODEL_URL + "model.json";
+      const metadataURL = MODEL_URL + "metadata.json";
+      model = await tmImage.load(modelURL, metadataURL);
+      maxPredictions = model.getTotalClasses();
 
-                model = await tmImage.load(modelURL, metadataURL);
-                maxPredictions = model.getTotalClasses();
+      // カメラ設定
+      const flip = true;
+      webcam = new tmImage.Webcam(400, 400, flip);
+      await webcam.setup();
+      await webcam.play();
+      loopId = window.requestAnimationFrame(loop);
 
-                const flip = true; // カメラ左右反転
-                webcam = new tmImage.Webcam(400, 300, flip);
-                await webcam.setup();
-                await webcam.play();
-                isRunning = true;
-                window.requestAnimationFrame(loop);
+      document.getElementById("webcam-container").innerHTML = "";
+      document.getElementById("webcam-container").appendChild(webcam.canvas);
 
-                document.getElementById("webcam-container").innerHTML = "";
-                document.getElementById("webcam-container").appendChild(webcam.canvas);
+      labelContainer = document.getElementById("label-container");
+    }
 
-                labelContainer = document.getElementById("label-container");
-                labelContainer.innerHTML = "";
-                for (let i = 0; i < maxPredictions; i++) {
-                    labelContainer.appendChild(document.createElement("div"));
-                }
-            } catch (err) {
-                document.getElementById("status").textContent =
-                    "推論中にエラー（Console を確認）";
-                console.error(err);
-            }
-        }
+    async function loop() {
+      webcam.update();
+      await predict();
+      loopId = window.requestAnimationFrame(loop);
+    }
 
-        async function loop() {
-            if (!isRunning) return;
-            webcam.update();
-            await predict();
-            window.requestAnimationFrame(loop);
-        }
+    async function predict() {
+      const prediction = await model.predict(webcam.canvas);
 
-        async function predict() {
-            const prediction = await model.predict(webcam.canvas);
-            for (let i = 0; i < maxPredictions; i++) {
-                const classPrediction =
-                    prediction[i].className + ": " + prediction[i].probability.toFixed(2);
-                labelContainer.childNodes[i].textContent = classPrediction;
-            }
-        }
+      // 一番確率が高いクラスを選択
+      let best = prediction.reduce((prev, curr) =>
+        (prev.probability > curr.probability ? prev : curr)
+      );
 
-        function stop() {
-            isRunning = false;
-            if (webcam) {
-                webcam.stop();
-            }
-        }
-    </script>
+      // 1人だけ表示
+      labelContainer.innerHTML = `判定: ${best.className} (${best.probability.toFixed(2)})`;
+    }
+
+    function stop() {
+      if (loopId) {
+        window.cancelAnimationFrame(loopId);
+        loopId = null;
+      }
+      if (webcam) {
+        webcam.stop();
+      }
+    }
+  </script>
 </body>
 </html>
