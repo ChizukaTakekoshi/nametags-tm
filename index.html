@@ -1,12 +1,162 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>nametags-tm</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>名札スキャン（TM + GitHub Pages）</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif; line-height: 1.6; padding: 16px; }
+    .row { display: grid; gap: 16px; grid-template-columns: 1fr; }
+    video, canvas { width: 100%; max-width: 640px; border-radius: 8px; background:#000; }
+    button { padding:10px 14px; border:0; border-radius:8px; cursor:pointer; }
+    #start { background:#2563eb; color:#fff; }
+    #stop { background:#64748b; color:#fff; }
+    #status { font-weight: 700; }
+    .card { border:1px solid #e5e7eb; border-radius:12px; padding:12px; max-width:640px; }
+    .muted { color:#6b7280; font-size: 13px; }
+    ul { margin: 0; padding-left: 1.2rem; }
+  </style>
+
+  <!-- 1) ライブラリ（tfjs → tm-image の順） -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
 </head>
 <body>
-    <h1>Hello GitHub Pages!</h1>
-    <p>ここに内容を書きます。</p>
+  <h1>名札スキャン（Teachable Machine）</h1>
+  <p class="muted">GitHub Pages から model.json / weights.bin を直接配信します。</p>
+
+  <div class="row">
+    <div class="card">
+      <div id="status">準備中…</div>
+      <p class="muted">“カメラ開始” を押し、名札（Aさん/Bさん/…）を画面に映してください。</p>
+      <div style="display:flex; gap:8px; margin:8px 0 12px;">
+        <button id="start">カメラ開始</button>
+        <button id="stop">停止</button>
+      </div>
+      <video id="cam" playsinline muted></video>
+      <div id="result" style="margin-top:12px;"></div>
+    </div>
+
+    <div class="card">
+      <h3>ラベル → 担当案件・趣味 表示</h3>
+      <p class="muted">Teachable Machine の “クラス名” と表示内容をここで紐付けます。</p>
+      <ul>
+        <li><b>Aさん</b> → 案件: Xプロジェクト / 趣味: サウナ</li>
+        <li><b>Bさん</b> → 案件: Yアプリ / 趣味: キャンプ</li>
+        <li><b>Cさん</b> → 案件: Zサイト / 趣味: 料理</li>
+        <li><b>Dさん</b> → 案件: RPA導入 / 趣味: 読書</li>
+      </ul>
+    </div>
+  </div>
+
+<script>
+/** ▼▼ ここだけあなたのリポ名/ユーザー名に合わせて設定 ▼▼ **/
+const MODEL_URL = "https://chizukatakekoshi.github.io/nametags-tm/model.json?cb=" + Date.now();
+/** ▲▲ ここだけ（キャッシュ回避の ?cb= 付き） ▲▲ **/
+
+let model, stream, rafId = null;
+const $ = (id) => document.getElementById(id);
+const log = (t) => { $("status").textContent = t; console.log(t); };
+
+// ラベル → 表示内容の辞書（必要に応じて編集）
+const PROFILE = {
+  "Aさん": { project: "Xプロジェクト", hobby: "サウナ" },
+  "Bさん": { project: "Yアプリ", hobby: "キャンプ" },
+  "Cさん": { project: "Zサイト", hobby: "料理" },
+  "Dさん": { project: "RPA導入", hobby: "読書" }
+};
+
+async function loadModel() {
+  try {
+    log("モデル読込中…");
+    // GitHub Pages 直配信（model.json 内の "paths":[ "weights.bin" ] は相対のままでOK）
+    model = await tmImage.load(MODEL_URL);
+    log("モデル準備OK（カメラ開始を押してください）");
+  } catch (e) {
+    console.error(e);
+    log("❌ モデル読み込み失敗：URL/共有/paths を再確認（model.json を直接開けるか確認）");
+  }
+}
+
+async function startCam() {
+  try {
+    if (!model) await loadModel();
+
+    log("カメラ起動中…（許可が必要です）");
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } }, audio: false
+    });
+    const vid = $("cam");
+    vid.srcObject = stream;
+
+    await new Promise((res) => {
+      if (vid.readyState >= 2) return res();
+      vid.onloadedmetadata = () => res();
+    });
+    await vid.play();
+    log("スキャン中：名札を映してください…");
+    predictLoop();
+  } catch (e) {
+    console.error(e);
+    log("❌ カメラ起動に失敗（権限/HTTPS/他アプリ使用中）");
+  }
+}
+
+function stopCam() {
+  cancelAnimationFrame(rafId);
+  if (stream) {
+    for (const t of stream.getTracks()) t.stop();
+    stream = null;
+  }
+  log("停止しました");
+}
+
+async function predictLoop() {
+  cancelAnimationFrame(rafId);
+  const vid = $("cam");
+  const cvs = document.createElement("canvas");
+  const ctx = cvs.getContext("2d");
+
+  const step = async () => {
+    try {
+      if (vid.videoWidth === 0 || vid.videoHeight === 0) {
+        // たまに0が返る端末があるので少し待つ
+      } else {
+        cvs.width = vid.videoWidth;
+        cvs.height = vid.videoHeight;
+        ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
+
+        const preds = await model.predict(cvs);
+        preds.sort((a, b) => b.probability - a.probability);
+
+        const top = preds[0];
+        if (top) {
+          const p = (top.probability * 100).toFixed(1);
+          const prof = PROFILE[top.className];
+          $("result").innerHTML =
+            `<b>予測:</b> ${top.className} (${p}%)` +
+            (prof ? `<div>案件: ${prof.project} / 趣味: ${prof.hobby}</div>` :
+                     `<div class="muted">（このラベルの表示内容は未設定）</div>`);
+          $("status").textContent = "スキャン中：名札を映してください…";
+        } else {
+          $("result").textContent = "推論結果なし（クラスが0？）";
+        }
+      }
+    } catch (e) {
+      console.error(e);
+      log("❌ 推論中にエラー（Console を確認）");
+    }
+    rafId = requestAnimationFrame(step);
+  };
+  step();
+}
+
+// イベント
+$("start").addEventListener("click", startCam);
+$("stop").addEventListener("click", stopCam);
+
+// 先にモデルだけ読み込み開始（任意）
+loadModel();
+</script>
 </body>
 </html>
