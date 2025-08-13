@@ -13,22 +13,22 @@
   <button type="button" onclick="stop()">停止</button>
 
   <div id="webcam-container"></div>
-  <div id="label-container" style="margin-top: 10px; font-size: 1.2em; font-weight: bold;"></div>
+  <div id="label-container" style="margin-top: 10px; font-size: 1.5em; font-weight: bold;"></div>
 
   <script type="text/javascript">
-    // GitHub Pages に置いたモデルのURL（最後に / をつける）
+    // モデルの置き場所（最後に / を付ける）
     const MODEL_URL = "https://chizukatakekoshi.github.io/nametags-tm/";
 
     let model, webcam, labelContainer, loopId;
-    let fixedResult = null; // 判定固定用変数
+    let fixedResult = null; // 一度確定したら保持
+    const THRESHOLD = 0.5;  // 閾値（0.5以上で確定）
 
     async function init() {
       const modelURL = MODEL_URL + "model.json";
       const metadataURL = MODEL_URL + "metadata.json";
       model = await tmImage.load(modelURL, metadataURL);
 
-      const flip = true;
-      webcam = new tmImage.Webcam(400, 400, flip);
+      webcam = new tmImage.Webcam(400, 400, true); // flip: true
       await webcam.setup();
       await webcam.play();
       loopId = window.requestAnimationFrame(loop);
@@ -42,7 +42,7 @@
 
     async function loop() {
       webcam.update();
-      if (fixedResult === null) { // 未確定なら予測
+      if (fixedResult === null) {
         await predict();
       }
       loopId = window.requestAnimationFrame(loop);
@@ -51,13 +51,13 @@
     async function predict() {
       const prediction = await model.predict(webcam.canvas);
       let best = prediction.reduce((prev, curr) =>
-        (prev.probability > curr.probability ? prev : curr)
+        prev.probability > curr.probability ? prev : curr
       );
 
-      // 確率0.5以上で固定判定
-      if (best.probability >= 0.5) {
+      // 初めて閾値以上になったら確定
+      if (best.probability >= THRESHOLD) {
         fixedResult = `${best.className} さん`;
-        labelContainer.innerHTML = `判定: ${fixedResult}`;
+        labelContainer.innerHTML = `判定結果: ${fixedResult}`;
       }
     }
 
@@ -73,5 +73,4 @@
   </script>
 </body>
 </html>
-
 
