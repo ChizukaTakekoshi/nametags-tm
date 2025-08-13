@@ -15,19 +15,15 @@
   <div id="label-container" style="margin-top: 10px; font-size: 1.5em; font-weight: bold;"></div>
 
   <script type="text/javascript">
-    // モデルのパス（GitHub Pages URLに変更）
     const MODEL_URL = "https://chizukatakekoshi.github.io/nametags-tm/";
-
-    let model, webcam, labelContainer, maxPredictions, loopId;
+    let model, webcam, labelContainer, loopId;
+    let fixedResult = null; // 判定を固定する変数
 
     async function init() {
-      // モデルとメタデータの読み込み
       const modelURL = MODEL_URL + "model.json";
       const metadataURL = MODEL_URL + "metadata.json";
       model = await tmImage.load(modelURL, metadataURL);
-      maxPredictions = model.getTotalClasses();
 
-      // カメラ設定
       const flip = true;
       webcam = new tmImage.Webcam(400, 400, flip);
       await webcam.setup();
@@ -42,20 +38,23 @@
 
     async function loop() {
       webcam.update();
-      await predict();
+      if (fixedResult === null) { // まだ確定していない場合のみ予測
+        await predict();
+      }
       loopId = window.requestAnimationFrame(loop);
     }
 
     async function predict() {
       const prediction = await model.predict(webcam.canvas);
-
-      // 一番確率が高いクラスを選択
       let best = prediction.reduce((prev, curr) =>
         (prev.probability > curr.probability ? prev : curr)
       );
 
-      // 1人だけ表示
-      labelContainer.innerHTML = `判定: ${best.className} (${best.probability.toFixed(2)})`;
+      // 確率が0.5以上なら即確定（閾値は調整可）
+      if (best.probability >= 0.5) {
+        fixedResult = `${best.className} (${best.probability.toFixed(2)})`;
+        labelContainer.innerHTML = `判定: ${fixedResult}`;
+      }
     }
 
     function stop() {
@@ -70,3 +69,4 @@
   </script>
 </body>
 </html>
+
