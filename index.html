@@ -1,162 +1,107 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>名札スキャン（TM + GitHub Pages）</title>
-  <style>
-    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif; line-height: 1.6; padding: 16px; }
-    .row { display: grid; gap: 16px; grid-template-columns: 1fr; }
-    video, canvas { width: 100%; max-width: 640px; border-radius: 8px; background:#000; }
-    button { padding:10px 14px; border:0; border-radius:8px; cursor:pointer; }
-    #start { background:#2563eb; color:#fff; }
-    #stop { background:#64748b; color:#fff; }
-    #status { font-weight: 700; }
-    .card { border:1px solid #e5e7eb; border-radius:12px; padding:12px; max-width:640px; }
-    .muted { color:#6b7280; font-size: 13px; }
-    ul { margin: 0; padding-left: 1.2rem; }
-  </style>
-
-  <!-- 1) ライブラリ（tfjs → tm-image の順） -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>名札スキャン（Teachable Machine）</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.9.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+            background-color: #f9f9f9;
+        }
+        h1 {
+            font-size: 1.5em;
+            margin-bottom: 0.5em;
+        }
+        #webcam-container {
+            margin-top: 10px;
+        }
+        #label-container div {
+            padding: 4px;
+        }
+        .error {
+            color: red;
+            font-weight: bold;
+            margin-top: 10px;
+        }
+        button {
+            padding: 6px 12px;
+            margin: 5px;
+        }
+    </style>
 </head>
 <body>
-  <h1>名札スキャン（Teachable Machine）</h1>
-  <p class="muted">GitHub Pages から model.json / weights.bin を直接配信します。</p>
+    <h1>名札スキャン（Teachable Machine）</h1>
+    <p>GitHub Pages から model.json / weights.bin / metadata.json を読み込みます。</p>
+    <div id="status" class="error"></div>
+    <button type="button" onclick="init()">カメラ開始</button>
+    <button type="button" onclick="stop()">停止</button>
+    <div id="webcam-container"></div>
+    <div id="label-container"></div>
 
-  <div class="row">
-    <div class="card">
-      <div id="status">準備中…</div>
-      <p class="muted">“カメラ開始” を押し、名札（Aさん/Bさん/…）を画面に映してください。</p>
-      <div style="display:flex; gap:8px; margin:8px 0 12px;">
-        <button id="start">カメラ開始</button>
-        <button id="stop">停止</button>
-      </div>
-      <video id="cam" playsinline muted></video>
-      <div id="result" style="margin-top:12px;"></div>
-    </div>
+    <script type="text/javascript">
+        // モデルフォルダのパス（index.html と同じ場所に model.json などを置く）
+        const MODEL_URL = "./";
 
-    <div class="card">
-      <h3>ラベル → 担当案件・趣味 表示</h3>
-      <p class="muted">Teachable Machine の “クラス名” と表示内容をここで紐付けます。</p>
-      <ul>
-        <li><b>Aさん</b> → 案件: Xプロジェクト / 趣味: サウナ</li>
-        <li><b>Bさん</b> → 案件: Yアプリ / 趣味: キャンプ</li>
-        <li><b>Cさん</b> → 案件: Zサイト / 趣味: 料理</li>
-        <li><b>Dさん</b> → 案件: RPA導入 / 趣味: 読書</li>
-      </ul>
-    </div>
-  </div>
+        let model, webcam, labelContainer, maxPredictions;
+        let isRunning = false;
 
-<script>
-/** ▼▼ ここだけあなたのリポ名/ユーザー名に合わせて設定 ▼▼ **/
-const MODEL_URL = "https://chizukatakekoshi.github.io/nametags-tm/model.json?cb=" + Date.now();
-/** ▲▲ ここだけ（キャッシュ回避の ?cb= 付き） ▲▲ **/
+        async function init() {
+            document.getElementById("status").textContent = "";
+            try {
+                const modelURL = MODEL_URL + "model.json";
+                const metadataURL = MODEL_URL + "metadata.json";
 
-let model, stream, rafId = null;
-const $ = (id) => document.getElementById(id);
-const log = (t) => { $("status").textContent = t; console.log(t); };
+                model = await tmImage.load(modelURL, metadataURL);
+                maxPredictions = model.getTotalClasses();
 
-// ラベル → 表示内容の辞書（必要に応じて編集）
-const PROFILE = {
-  "Aさん": { project: "Xプロジェクト", hobby: "サウナ" },
-  "Bさん": { project: "Yアプリ", hobby: "キャンプ" },
-  "Cさん": { project: "Zサイト", hobby: "料理" },
-  "Dさん": { project: "RPA導入", hobby: "読書" }
-};
+                const flip = true; // カメラ左右反転
+                webcam = new tmImage.Webcam(400, 300, flip);
+                await webcam.setup();
+                await webcam.play();
+                isRunning = true;
+                window.requestAnimationFrame(loop);
 
-async function loadModel() {
-  try {
-    log("モデル読込中…");
-    // GitHub Pages 直配信（model.json 内の "paths":[ "weights.bin" ] は相対のままでOK）
-    model = await tmImage.load(MODEL_URL);
-    log("モデル準備OK（カメラ開始を押してください）");
-  } catch (e) {
-    console.error(e);
-    log("❌ モデル読み込み失敗：URL/共有/paths を再確認（model.json を直接開けるか確認）");
-  }
-}
+                document.getElementById("webcam-container").innerHTML = "";
+                document.getElementById("webcam-container").appendChild(webcam.canvas);
 
-async function startCam() {
-  try {
-    if (!model) await loadModel();
-
-    log("カメラ起動中…（許可が必要です）");
-    stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" } }, audio: false
-    });
-    const vid = $("cam");
-    vid.srcObject = stream;
-
-    await new Promise((res) => {
-      if (vid.readyState >= 2) return res();
-      vid.onloadedmetadata = () => res();
-    });
-    await vid.play();
-    log("スキャン中：名札を映してください…");
-    predictLoop();
-  } catch (e) {
-    console.error(e);
-    log("❌ カメラ起動に失敗（権限/HTTPS/他アプリ使用中）");
-  }
-}
-
-function stopCam() {
-  cancelAnimationFrame(rafId);
-  if (stream) {
-    for (const t of stream.getTracks()) t.stop();
-    stream = null;
-  }
-  log("停止しました");
-}
-
-async function predictLoop() {
-  cancelAnimationFrame(rafId);
-  const vid = $("cam");
-  const cvs = document.createElement("canvas");
-  const ctx = cvs.getContext("2d");
-
-  const step = async () => {
-    try {
-      if (vid.videoWidth === 0 || vid.videoHeight === 0) {
-        // たまに0が返る端末があるので少し待つ
-      } else {
-        cvs.width = vid.videoWidth;
-        cvs.height = vid.videoHeight;
-        ctx.drawImage(vid, 0, 0, cvs.width, cvs.height);
-
-        const preds = await model.predict(cvs);
-        preds.sort((a, b) => b.probability - a.probability);
-
-        const top = preds[0];
-        if (top) {
-          const p = (top.probability * 100).toFixed(1);
-          const prof = PROFILE[top.className];
-          $("result").innerHTML =
-            `<b>予測:</b> ${top.className} (${p}%)` +
-            (prof ? `<div>案件: ${prof.project} / 趣味: ${prof.hobby}</div>` :
-                     `<div class="muted">（このラベルの表示内容は未設定）</div>`);
-          $("status").textContent = "スキャン中：名札を映してください…";
-        } else {
-          $("result").textContent = "推論結果なし（クラスが0？）";
+                labelContainer = document.getElementById("label-container");
+                labelContainer.innerHTML = "";
+                for (let i = 0; i < maxPredictions; i++) {
+                    labelContainer.appendChild(document.createElement("div"));
+                }
+            } catch (err) {
+                document.getElementById("status").textContent =
+                    "推論中にエラー（Console を確認）";
+                console.error(err);
+            }
         }
-      }
-    } catch (e) {
-      console.error(e);
-      log("❌ 推論中にエラー（Console を確認）");
-    }
-    rafId = requestAnimationFrame(step);
-  };
-  step();
-}
 
-// イベント
-$("start").addEventListener("click", startCam);
-$("stop").addEventListener("click", stopCam);
+        async function loop() {
+            if (!isRunning) return;
+            webcam.update();
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
 
-// 先にモデルだけ読み込み開始（任意）
-loadModel();
-</script>
+        async function predict() {
+            const prediction = await model.predict(webcam.canvas);
+            for (let i = 0; i < maxPredictions; i++) {
+                const classPrediction =
+                    prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+                labelContainer.childNodes[i].textContent = classPrediction;
+            }
+        }
+
+        function stop() {
+            isRunning = false;
+            if (webcam) {
+                webcam.stop();
+            }
+        }
+    </script>
 </body>
 </html>
