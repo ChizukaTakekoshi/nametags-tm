@@ -3,21 +3,24 @@
 <head>
   <meta charset="UTF-8">
   <title>名札スキャン（Teachable Machine）</title>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@0.8/dist/teachablemachine-image.min.js"></script>
 </head>
 <body>
   <h1>名札スキャン（Teachable Machine）</h1>
-  <p>GitHub Pages から model.json / weights.bin / metadata.json を読み込みます</p>
-  <button onclick="init()">カメラ開始</button>
-  <button onclick="stop()">停止</button>
+  <p>GitHub Pages から model.json / weights.bin / metadata.json を読み込みます。</p>
+
+  <button type="button" onclick="init()">カメラ開始</button>
+  <button type="button" onclick="stop()">停止</button>
+
   <div id="webcam-container"></div>
-  <div id="label-container" style="margin-top: 10px; font-size: 1.5em; font-weight: bold;"></div>
+  <div id="label-container" style="margin-top: 10px; font-size: 1.2em; font-weight: bold;"></div>
 
   <script type="text/javascript">
+    // GitHub Pages に置いたモデルのURL（最後に / をつける）
     const MODEL_URL = "https://chizukatakekoshi.github.io/nametags-tm/";
+
     let model, webcam, labelContainer, loopId;
-    let fixedResult = null; // 判定を固定する変数
+    let fixedResult = null; // 判定固定用変数
 
     async function init() {
       const modelURL = MODEL_URL + "model.json";
@@ -34,11 +37,12 @@
       document.getElementById("webcam-container").appendChild(webcam.canvas);
 
       labelContainer = document.getElementById("label-container");
+      labelContainer.innerHTML = "判定待ち…";
     }
 
     async function loop() {
       webcam.update();
-      if (fixedResult === null) { // まだ確定していない場合のみ予測
+      if (fixedResult === null) { // 未確定なら予測
         await predict();
       }
       loopId = window.requestAnimationFrame(loop);
@@ -50,9 +54,9 @@
         (prev.probability > curr.probability ? prev : curr)
       );
 
-      // 確率が0.5以上なら即確定（閾値は調整可）
+      // 確率0.5以上で固定判定
       if (best.probability >= 0.5) {
-        fixedResult = `${best.className} (${best.probability.toFixed(2)})`;
+        fixedResult = `${best.className} さん`;
         labelContainer.innerHTML = `判定: ${fixedResult}`;
       }
     }
@@ -69,4 +73,5 @@
   </script>
 </body>
 </html>
+
 
